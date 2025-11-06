@@ -22,7 +22,8 @@
       const lineWidth = 15;
       const gapX = 10;
 
-        const mouse = { x: 0, y: 0 }
+      const mouse = { x: 0, y: 0 };
+      let gameStarted = false;
 
       const field = {
         w: window.innerWidth,
@@ -42,31 +43,98 @@
         },
       };
 
-      const leftPddle = {
+      const leftPaddle = {
         x: gapX,
-        y: 400,
+        y: field.h / 2 - 100,
         w: line.w,
         h: 200,
+        _speed: 8,
         draw: function () {
           canvasCtx.fillStyle = "#ffffff";
           canvasCtx.fillRect(this.x, this.y, this.w, this.h);
+        },
+        move: function () {
+          if (!gameStarted) return;
+          
+          // Move a raquete em direção ao mouse
+          const centerY = this.y + this.h / 2;
+          const targetY = mouse.y - this.h / 2;
+
+          if (Math.abs(centerY - mouse.y) > 5) {
+            if (centerY < mouse.y) {
+              this.y += this._speed;
+            } else {
+              this.y -= this._speed;
+            }
+          }
+
+          // Limita a raquete dentro da tela
+          if (this.y < 0) {
+            this.y = 0;
+          } else if (this.y + this.h > field.h) {
+            this.y = field.h - this.h;
+          }
         },
       };
 
       const rightPaddle = {
         x: field.w - line.w - gapX,
-        y: 400,
+        y: field.h / 2 - 100,
         w: line.w,
         h: 200,
+        _speed: 4,
+        _error: 0.7, // Imperfeição da IA (0.0 = perfeita, 1.0 = muito imperfeita)
         draw: function () {
           canvasCtx.fillStyle = "#ffffff";
           canvasCtx.fillRect(this.x, this.y, this.w, this.h);
         },
+        move: function () {
+          if (!gameStarted) return;
+          
+          // IA com imperfeição: só reage quando a bola está vindo em sua direção
+          // e adiciona um erro aleatório na precisão
+          const centerY = this.y + this.h / 2;
+          
+          // Só move se a bola estiver vindo em direção à raquete (velocityX negativo)
+          if (ball.velocityX < 0) {
+            // Adiciona erro aleatório na previsão da posição da bola
+            const errorOffset = (Math.random() - 0.5) * this.h * this._error;
+            const targetY = ball.y + errorOffset;
+
+            // Aumenta a margem de erro para não ser perfeita
+            const threshold = 15 + (this.h * this._error * 0.3);
+            
+            if (Math.abs(centerY - targetY) > threshold) {
+              if (centerY < targetY) {
+                this.y += this._speed;
+              } else {
+                this.y -= this._speed;
+              }
+            }
+          } else {
+            // Quando a bola está indo para longe, move lentamente para o centro
+            const centerTarget = field.h / 2 - this.h / 2;
+            if (Math.abs(this.y - centerTarget) > 10) {
+              if (this.y < centerTarget) {
+                this.y += this._speed * 0.5;
+              } else {
+                this.y -= this._speed * 0.5;
+              }
+            }
+          }
+
+          // Limita a raquete dentro da tela
+          if (this.y < 0) {
+            this.y = 0;
+          } else if (this.y + this.h > field.h) {
+            this.y = field.h - this.h;
+          }
+        },
       };
 
       const score = {
-        human: 1,
-        computer: 2,
+        human: 0,
+        computer: 0,
         draw: function () {
           canvasCtx.font = "bold 72px Arial";
           canvasCtx.textAlign = "center";
@@ -77,66 +145,204 @@
         },
       };
 
-      const boll = {
-        x: 300,
-        y: 200,
+      const ball = {
+        x: field.w / 2,
+        y: field.h / 2,
         r: 20,
-        speed: 5,
+        speed: 8,
+        velocityX: 1,
+        velocityY: 1,
         _move: function () {
-          this.x += 1 *  this.speed;
-          this.y += 1 * this.speed;
+          if (!gameStarted) return;
+          
+          this.x += this.velocityX * this.speed;
+          this.y += this.velocityY * this.speed;
+
+          // Colisão com bordas superior e inferior
+          if (this.y - this.r <= 0 || this.y + this.r >= field.h) {
+            this.velocityY *= -1;
+          }
+
+          // Colisão com raquete esquerda
+          if (
+            this.x - this.r <= leftPaddle.x + leftPaddle.w &&
+            this.x - this.r >= leftPaddle.x &&
+            this.y >= leftPaddle.y &&
+            this.y <= leftPaddle.y + leftPaddle.h
+          ) {
+            this.velocityX = Math.abs(this.velocityX); // Garante que vai para direita
+            // Ajusta o ângulo baseado na posição de impacto na raquete
+            const hitPos = (this.y - leftPaddle.y) / leftPaddle.h;
+            this.velocityY = (hitPos - 0.5) * 2; // -1 a 1
+            this.x = leftPaddle.x + leftPaddle.w + this.r; // Reposiciona a bola
+          }
+
+          // Colisão com raquete direita
+          if (
+            this.x + this.r >= rightPaddle.x &&
+            this.x + this.r <= rightPaddle.x + rightPaddle.w &&
+            this.y >= rightPaddle.y &&
+            this.y <= rightPaddle.y + rightPaddle.h
+          ) {
+            this.velocityX = -Math.abs(this.velocityX); // Garante que vai para esquerda
+            // Ajusta o ângulo baseado na posição de impacto na raquete
+            const hitPos = (this.y - rightPaddle.y) / rightPaddle.h;
+            this.velocityY = (hitPos - 0.5) * 2; // -1 a 1
+            this.x = rightPaddle.x - this.r; // Reposiciona a bola
+          }
+
+          // Pontuação: bola saiu da tela
+          if (this.x < 0) {
+            score.computer++;
+            this.reset();
+          } else if (this.x > field.w) {
+            score.human++;
+            this.reset();
+          }
+        },
+        reset: function () {
+          this.x = field.w / 2;
+          this.y = field.h / 2;
+          // Direção aleatória inicial
+          this.velocityX = Math.random() > 0.5 ? 1 : -1;
+          this.velocityY = (Math.random() - 0.5) * 2; // -1 a 1
         },
         draw: function () {
           canvasCtx.fillStyle = "#ffffff";
           canvasCtx.beginPath();
-          canvasCtx.arc(this.y, this.x, this.r, 0, 2 * Math.PI, false);
+          canvasCtx.arc(this.x, this.y, this.r, 0, 2 * Math.PI, false);
           canvasCtx.fill();
 
-          this._move()
+          this._move();
         },
       };
 
       function setup() {
-        canvasEl.width = canvasCtx.width = field.w;
-        canvasEl.height = canvasCtx.height = field.h;
+        canvasEl.width = field.w;
+        canvasEl.height = field.h;
+        ball.reset();
+      }
+
+      function drawStartScreen() {
+        field.draw();
+        
+        // Título
+        canvasCtx.font = "bold 80px Arial";
+        canvasCtx.textAlign = "center";
+        canvasCtx.textBaseline = "middle";
+        canvasCtx.fillStyle = "#ffffff";
+        canvasCtx.fillText("PING PONG", field.w / 2, field.h / 2 - 150);
+        
+        // Instruções
+        canvasCtx.font = "30px Arial";
+        canvasCtx.fillText("Mova o mouse para controlar a raquete esquerda", field.w / 2, field.h / 2 - 50);
+        canvasCtx.fillText("A raquete direita é controlada pela IA", field.w / 2, field.h / 2);
+        canvasCtx.fillText("Marque pontos fazendo a bola sair da tela do oponente", field.w / 2, field.h / 2 + 50);
+        
+        // Botão de iniciar
+        const buttonWidth = 300;
+        const buttonHeight = 80;
+        const buttonX = field.w / 2 - buttonWidth / 2;
+        const buttonY = field.h / 2 + 150;
+        
+        canvasCtx.fillStyle = "#01341d";
+        canvasCtx.fillRect(buttonX, buttonY, buttonWidth, buttonHeight);
+        
+        canvasCtx.strokeStyle = "#ffffff";
+        canvasCtx.lineWidth = 3;
+        canvasCtx.strokeRect(buttonX, buttonY, buttonWidth, buttonHeight);
+        
+        canvasCtx.font = "bold 40px Arial";
+        canvasCtx.fillStyle = "#ffffff";
+        canvasCtx.fillText("INICIAR JOGO", field.w / 2, buttonY + buttonHeight / 2 + 10);
+        
+        canvasCtx.font = "20px Arial";
+        canvasCtx.fillText("Clique aqui ou pressione ESPAÇO", field.w / 2, buttonY + buttonHeight + 40);
       }
 
       function draw() {
+        if (!gameStarted) {
+          drawStartScreen();
+          return;
+        }
+        
         field.draw();
         line.draw();
-        leftPddle.draw();
+        leftPaddle.move();
+        rightPaddle.move();
+        leftPaddle.draw();
         rightPaddle.draw();
-        boll.draw();
+        ball.draw();
         score.draw();
       }
 
-      window.animateFrame = (function() {
+      window.animateFrame = (function () {
         return (
-            window.requestAnimationFrame ||
-            window.webKitRequestAnimationFrame ||
-            window.mozRequestAnimationFrame ||
-            window.oRequestAnimationFrame ||
-            window.mRequestAnimationFrame ||
-            function (callback) {
-                return window.setTimeout(callback, 1000 / 60)
-            }
-        )
-      })()
+          window.requestAnimationFrame ||
+          window.webKitRequestAnimationFrame ||
+          window.mozRequestAnimationFrame ||
+          window.oRequestAnimationFrame ||
+          window.mRequestAnimationFrame ||
+          function (callback) {
+            return window.setTimeout(callback, 1000 / 60);
+          }
+        );
+      })();
 
-      function main () {
-        animateFrame(main)
-        draw()
+      function startGame() {
+        gameStarted = true;
+        score.human = 0;
+        score.computer = 0;
+        ball.reset();
       }
 
-      setup()
-      main()
+      function main() {
+        animateFrame(main);
+        draw();
+      }
 
-      canvasEl.addEventListener("mousemove", function(e) {
-        
-        mouse.x = e.pageX
-        mouse.y = e.pageY
+      // Ajusta o tamanho do canvas quando a janela é redimensionada
+      window.addEventListener("resize", function () {
+        field.w = window.innerWidth;
+        field.h = window.innerHeight;
+        setup();
+      });
 
-      })
+      canvasEl.addEventListener("mousemove", function (e) {
+        mouse.x = e.pageX;
+        mouse.y = e.pageY;
+      });
+
+      // Inicia o jogo ao clicar no canvas
+      canvasEl.addEventListener("click", function (e) {
+        if (!gameStarted) {
+          const buttonWidth = 300;
+          const buttonHeight = 80;
+          const buttonX = field.w / 2 - buttonWidth / 2;
+          const buttonY = field.h / 2 + 150;
+          
+          // Verifica se o clique foi no botão
+          if (
+            e.pageX >= buttonX &&
+            e.pageX <= buttonX + buttonWidth &&
+            e.pageY >= buttonY &&
+            e.pageY <= buttonY + buttonHeight
+          ) {
+            startGame();
+          }
+        }
+      });
+
+      // Inicia o jogo ao pressionar ESPAÇO
+      window.addEventListener("keydown", function (e) {
+        if (e.code === "Space" && !gameStarted) {
+          e.preventDefault();
+          startGame();
+        }
+      });
+
+      setup();
+      main();
     </script>
   </body>
 </html>
